@@ -474,7 +474,7 @@ def feat_eng(input_interactions_train, sequences_dictionary, n_cpu, foutput, can
         print('Error: topological features difference between yes or no, will be considered no')
         extrac_topo_features = False
     
-    extrac_math_featuresB = False
+    extrac_math_featuresB = True
     
     output_folds = foutput+'/folds_and_topology_feats'
     make_fold(output_folds)
