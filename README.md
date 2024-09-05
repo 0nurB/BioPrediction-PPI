@@ -26,8 +26,6 @@
 
 **Published paper:** in progress
 
-**See our example on Colab:** execution_form.ipynb File!
-
 BioPrediction is part of a bigger project that proposes to democratize Machine Learning for the analysis, study, and control of epidemics and pandemics. [Take a look!!!](http://autoaipandemics.icmc.usp.br)
 
 ## Awards
@@ -64,10 +62,13 @@ In summary, BioPrediction-PPI proved to be competitive with almost all evaluated
 
 
 
-# COLAB
+## Run by Google Cobab
+You can download this repository and upload it to your Google Drive. Then, use the **execution_form.ipynb** file. With this approach, you don't need to install Python to use BioPrediction-PPI, as this file will create the environment in Google Colab, and you can fill out a form with the paths to your datasets for execution. 
+**IMPORTANT**: do not upload this GitHub repository into another folder in your Drive, as this will alter the paths, and the environment will not be created correctly. Also, upload your data inside the BioPrediction-PPI folder, as the environment will search for files within this folder. Lastly, in the **reproducibility_file.ipynb**, you can find some examples, as it contains the code to generate most of the results from the article.
 
+## Run locally 
 
-## Installing dependencies and package
+### Installing dependencies and package
 
 #### Via miniconda (Terminal)
 
