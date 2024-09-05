@@ -61,6 +61,12 @@ In summary, BioPrediction-PPI proved to be competitive with almost all evaluated
 * **Correspondence:** rpbonidia@gmail.com or bonidia@usp.br or brunorf1204@usp.br
 
 
+
+
+
+# COLAB
+
+
 ## Installing dependencies and package
 
 #### Via miniconda (Terminal)
