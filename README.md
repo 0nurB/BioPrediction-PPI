@@ -48,10 +48,6 @@ In summary, BioPrediction-PPI proved to be competitive with almost all evaluated
 
 * BioPrediction-RPI can accelerate new studies, democratizing the use of ML techniques by non-experts in ML.
 
-<h1 align="center">
-  <img src="https://github.com/0nurB/BioPredictionRPI-1.0/blob/main/img/overall.png" alt="BioPrediction-Flowchart" width="600"> 
-</h1>
-
 ## Maintainers
 
 * Robson Parmezan Bonidia and Bruno Rafael Florentino
