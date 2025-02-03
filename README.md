@@ -108,7 +108,7 @@ conda create --name bioprediction-ppi python=3.11.5
 
 ```sh
 
-conda activate bioprediction
+conda activate bioprediction-ppi
 
 ```
 
