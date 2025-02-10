@@ -144,12 +144,11 @@ def coverage_graph(output_data, output):
         recall = true_positives / total_positives if total_positives > 0 else 0
         recalls.append(recall)
     
-    # Plot do gráfico
-    plt.plot(thresholds, recalls, label='Recall by Threshold')
+    plt.plot(thresholds, recalls)
     plt.xlabel('Threshold (%)')
     plt.ylabel('Recall')
-    plt.title('Recall vs. Threshold - Candidates interactions')
-    plt.axvline(x=0.5, color='red', linestyle='--', label='50% threshold')
+    plt.title('Recall vs. Threshold')
+    plt.axvline(x=0.5, color='red', linestyle='--', label='conventional division')
     plt.gca().invert_xaxis()  # Invert the x-axis for increasing thresholds.
     plt.grid(True)
     plt.legend()
