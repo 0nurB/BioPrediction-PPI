@@ -52,6 +52,7 @@ from numpy.random import default_rng
 
 from bio_extrac import extrac_math_features, graph_ext, make_graph, make_graph_all
 from utility_graphs import final_predictions, precision_graph, coverage_graph, make_fig_graph
+from utility_graphs import final_predictions, precision_graph, coverage_graph, make_fig_graph, precision_graph_int, dist_score
 from shap_graphs import type_model, shap_waterf, shap_bar, shap_beeswarm
 from make_model import metrics, better_model, Score_table, objective_rf, tuning_rf_bayesian, objective_cb, tuning_catboost_bayesian, objective_gb, tuning_xgb_bayesian
 
@@ -374,6 +375,8 @@ def utility(output_data, output):
     
     generated_plt['precision'] = precision_graph(output_data, output)
     generated_plt['coverage'] = coverage_graph(output_data, output)
+    precision_graph_int(output_data, output)
+    dist_score(output_data, output)
     make_fig_graph(output_data, output)
     return generated_plt
 

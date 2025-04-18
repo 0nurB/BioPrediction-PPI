@@ -71,7 +71,112 @@ def final_predictions(X_test, y_test, y_pares, model, output):
     output_data = output_data.sort_values(by='Probability of class 1', ascending=False)
     output_data.to_csv(output+'/list_final_predictions.csv', index=False)
     return output_data
-    
+
+
+
+def dist_score(output_data, output):
+    output_data[['ProteinA', 'ProteinB']] = output_data['nameseq'].str.split('_', expand=True)
+    df = output_data
+    # Filter the data for positive and negative interactions
+    df_positive = df[df['Class_real'] == 1]
+    df_negative = df[df['Class_real'] == 0]
+
+    print(f"Number of negative interactions: {len(df_negative)}")
+
+    # Create histogram with both labels
+    plt.figure(figsize=(8, 5))
+    plt.hist(df_positive['Probability of class 1'], bins=20, color='#A1CAF1', edgecolor='black', alpha=0.7, label='Label 1 (Positive)')
+    plt.hist(df_negative['Probability of class 1'], bins=20, color='#FFABAB', edgecolor='black', alpha=0.7, label='Label 0 (Negative)')
+
+    # Graph settings
+    plt.xlabel('Pairs scores')
+    plt.ylabel('Number of interactions')
+    plt.title('Distribution of scores for the entire test set')
+    plt.legend()
+    plt.grid(axis='y', linestyle='--', alpha=0.6)
+
+    # Limit the Y-axis to 1 time the number of positive interactions
+    plt.ylim(0, 1 * len(df_positive))
+
+    # Save the graph
+    graph_path = f"{output}/precision_vs_threshold_graph.png"
+    plt.savefig(graph_path)
+
+    return graph_path
+
+
+
+
+def precision_graph_int(output_data, output):
+    """
+    Generate and save a precision vs. threshold graph using filtered data.
+
+    Parameters:
+    - output_data: A DataFrame containing the final predictions and related information.
+    - output: The directory where the graph image will be saved.
+
+    Returns:
+    - output: The file path to the saved precision vs. threshold graph image.
+    """
+    # Separar 'nameseq' em 'ProteinA' e 'ProteinB'
+    output_data[['ProteinA', 'ProteinB']] = output_data['nameseq'].str.split('_', expand=True)
+
+    # Definir os intervalos
+    score1 = [1.00, 0.90, 0.80, 0.70, 0.60]
+    score2 = [0.90, 0.80, 0.70, 0.60, 0.499]
+
+    intervals = []
+    precisions = []
+    interaction_counts = []
+
+    # Definir cores pastéis para cada intervalo
+    colors = ['#A1CAF1', '#B2D8B2', '#FFD59A', '#FFABAB', '#D7BDE2']
+    # Calcular a precisão para cada intervalo
+    for i in range(len(score1)):
+        filtered_df = output_data[(output_data['Probability of class 1'] <= score1[i]) & (output_data['Probability of class 1'] > score2[i])]
+        
+        n_interactions = len(filtered_df)
+        if n_interactions > 0:
+            precision = len(filtered_df[filtered_df['Class_real'] == 1]) / n_interactions
+        else:
+            precision = 0  # Evita divisão por zero
+
+        # Salvar para o gráfico com intervalo invertido
+        interval_label = f"{score1[i]} - {score2[i]}"
+        intervals.append(interval_label)
+        precisions.append(precision)
+        interaction_counts.append(n_interactions)
+
+        #print(f"Interval {interval_label}: {precision:.4f}, Nº interactions: {n_interactions}")
+
+    plt.figure(figsize=(8, 5))
+    bars = plt.bar(intervals, precisions, color=colors, alpha=0.8, edgecolor='black')
+
+    plt.xlabel('Pairs scores Intervals')
+    plt.ylabel('Precision')
+    plt.title('Precision in different Candidates scores intervals for test interactions')
+    plt.ylim(0, 1)
+    plt.grid(axis='y', linestyle='--', alpha=0.6)
+
+    # Add precision values on the bars
+    for i, bar in enumerate(bars):
+        plt.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02, 
+                 f"{precisions[i]:.2f}", ha='center', fontsize=10)
+
+    # Create detailed legend with the same colors as the chart
+    legend_labels = [f"{intervals[i]}: {interaction_counts[i]} interactions" for i in range(len(intervals))]
+    legend_patches = [plt.Rectangle((0,0),1,1, color=colors[i], alpha=0.8, edgecolor='black') for i in range(len(intervals))]
+    plt.legend(legend_patches, legend_labels, loc='upper right', fontsize=8, title="Nº of Interactions")
+
+    # Save the graph
+    graph_path = f"{output}/precision_vs_threshold(intervals)_graph.png"
+    plt.savefig(graph_path)
+
+
+    return graph_path
+
+
+
 def precision_graph(output_data, output):
     """
     Generate and save a precision vs. threshold graph using filtered data.
