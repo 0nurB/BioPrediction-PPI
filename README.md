@@ -135,7 +135,7 @@ where:
 
     Those dictionaries must contain all sequences in train, test, and candidates.
 
-    -topology_features: uses topology features to characterization of the sequences, e.g., yes or no, default=yes)
+    -topological_features: uses topology features to characterization of the sequences, e.g., yes or no, default=yes)
     -output: output path, e.g., sars_experiment
 
     Use a string formant to execute BioPrediction, like this complete exemple:
