@@ -9,7 +9,8 @@ import networkx as nx
 import dgl
 import torch
 import statistics
-from sklearn.model_selection import train_test_split, GridSearchCV, KFold
+from sklearn.model_selection import train_test_split, GridSearchCV, KFold, StratifiedKFold
+from sklearn.base import clone
 from sklearn.metrics import (
     precision_recall_curve, precision_score, recall_score, f1_score,
     auc, accuracy_score, balanced_accuracy_score, roc_auc_score
@@ -30,7 +31,7 @@ import subprocess
 import sys
 import os.path
 from subprocess import Popen
-from multiprocessing import Manager
+from multiprocessing import Manager, Pool
 import polars as pl
 from hyperopt import hp, fmin, tpe, STATUS_OK, Trials
 from sklearn.model_selection import StratifiedKFold
@@ -59,7 +60,12 @@ from make_model import metrics, better_model, Score_table, objective_rf, tuning_
 scaler = StandardScaler()
 warnings.filterwarnings('ignore')
 num_folds = 5
+run_folds = list(range(num_folds))  # folds to run (0-based); the splits themselves never change
 kf = KFold(n_splits=num_folds, shuffle=True, random_state=40)
+# Inner K-fold on each outer training set: out-of-fold (OOF) predictions of the partial models become the
+# meta-features of the final model (standard stacked generalization).
+num_inner = 5
+inner_kf = StratifiedKFold(n_splits=num_inner, shuffle=True, random_state=43)
 
 
 def fitting(test_data, score_name, clf_fit, X_test, y_test, output_table, output_metrics=None):
@@ -178,42 +184,64 @@ def make_trains(train, test, final_test, carac):
     return X_train, y_train, X_test, y_test, test_data, X_final, y_final, test_data_final
 
 
-def partial_models(index, datasets, names, train_edges, test_edges, final_test, partial_folds):
+def fit_proto(proto, X, y):
+    """Fit a fresh copy of the (unfitted) model `proto`, with the same input cleaning as better_model."""
+    X = X.replace([np.inf, -np.inf, np.nan], 1e9).astype('float32')
+    return clone(proto).fit(X.values, y)
+
+
+def partial_models(index, datasets, names, train_edges, inner_edges, final_test, partial_folds):
     """
-    Create and save partial models and associated data for a specific dataset.
+    Create and save a partial model and its out-of-fold (OOF) data for a specific descriptor.
 
     Parameters:
         index (str): Name of the index column in datasets.
-        datasets (str): Path to the dataset file containing characteristics data.
+        datasets (list): Paths to the characteristics files: the first one is used with the whole outer training
+            set, the next ones with each inner split (topology depends on the training graph, so it is recomputed
+            for every inner split; sequence descriptors repeat the same file).
         names (str): Name or identifier for the dataset.
-        train_edges (str): Path to the training data file (edges).
-        test_edges (str): Path to the testing data file (edges).
+        train_edges (str): Path to the outer training data file (edges).
+        inner_edges (list): (inner train, inner held-out) edge files, one pair per inner split.
         final_test (str): Path to the final testing data file (edges).
         partial_folds (str): Directory where partial models and data will be saved.
 
     Returns:
         None
     """
-    # Read characteristics data from CSV file and set index
-    carac = pd.read_csv(datasets, sep=",")
-    carac.set_index(index, inplace=True)
+    caracs = []
+    for path in datasets:
+        c = pd.read_csv(path, sep=",")
+        c.set_index(index, inplace=True)
+        # Check if 'label' column exists in carac and drop it if present
+        if 'label' in c.columns:
+            c = c.drop(columns='label')
+        caracs.append(c)
+    carac = caracs[0]
 
-    # Check if 'label' column exists in carac and drop it if present
-    if 'label' in carac.columns:
-        carac = carac.drop(columns='label')
+    # The algorithm is chosen with the first inner split only (train on 4/5, F1 on the held-out 1/5)
+    X_tr, y_tr, X_ho, y_ho, _, _, _, _ = make_trains(inner_edges[0][0], inner_edges[0][1], final_test, caracs[1])
+    proto = clone(better_model(X_tr, y_tr, X_ho, y_ho, partial_folds+'/model_'+names+'_selection.sav'))
 
-    # Create training, testing, and final testing datasets
-    X_train, y_train, X_test, y_test, test_data, X_final, y_final, test_data_final = \
-        make_trains(train_edges, test_edges, final_test, carac)
+    # OOF scores: each training pair is scored by a model that did not see it
+    oof = []
+    for j, (inner_train, inner_held) in enumerate(inner_edges):
+        X_tr, y_tr, X_ho, y_ho, held_data, _, _, _ = make_trains(inner_train, inner_held, final_test, caracs[j+1])
+        m = fit_proto(proto, X_tr, y_tr)
+        oof.append(Score_table(held_data, [], m.predict_proba(X_ho.values)[:, 1], 'Score_'+names,
+                               partial_folds+'/oof_'+names+'_split'+str(j+1)+'.csv'))
+    oof = pd.concat(oof).set_index('nameseq')
+    pairs = pd.read_csv(train_edges)
+    order = pairs.iloc[:, 0].astype(str) + '_' + pairs.iloc[:, 1].astype(str)
+    oof.loc[order[order.isin(oof.index)]].reset_index().to_csv(partial_folds+'/data_train_'+names+'.csv', index=False)
 
-    # Train a classifier, save the model, and generate score tables and metrics
-    clf = better_model(X_train, y_train, X_test, y_test, partial_folds+'/model_'+names+'.sav')      
-    
-    fitting(test_data, 'Score_'+names, clf, X_test, y_test, partial_folds+'/data_train_'+names+'.csv', partial_folds+'/metrics_'+names+'.csv')        
-    
+    # Refit on the whole outer training set to score the final test (and the candidates)
+    X_train, y_train, _, _, _, X_final, y_final, test_data_final = make_trains(train_edges, final_test, final_test, carac)
+    clf = fit_proto(proto, X_train, y_train)
+    joblib.dump(clf, partial_folds+'/model_'+names+'.sav')
+
     fitting(test_data_final, 'Score_'+names, clf, X_final, y_final,
-            partial_folds+'/data_test_'+names+'.csv')
-    
+            partial_folds+'/data_test_'+names+'.csv', partial_folds+'/metrics_'+names+'.csv')
+
     if isinstance(candidates, pd.DataFrame):       
         columns = candidates.columns
         candidates_names = candidates.copy()
@@ -467,7 +495,7 @@ def make_fold(path_results):
 def feat_eng(input_interactions_train, sequences_dictionary, n_cpu, foutput, candidates, topological_features):
     input_interactions_train = pd.read_csv(input_interactions_train, sep=',')
     
-    global train_edges_output,  test_edges_output, final_edges_output, partial_folds, output_folds, output_folds_number, features_amino
+    global train_edges_output, inner_edges_output, final_edges_output, partial_folds, output_folds, output_folds_number, features_amino
     
     if topological_features == 'no':
         extrac_topo_features = False
@@ -491,17 +519,36 @@ def feat_eng(input_interactions_train, sequences_dictionary, n_cpu, foutput, can
     if isinstance(candidates, pd.DataFrame): 
         edges = pd.concat([input_interactions_train, candidates], ignore_index=True)
     
+    # Sequence descriptors first: only pairs whose two proteins have all of them are used in the folds
+    features_amino = [1,2,3,4,5,6,7,8] #,9,10,11]
+    if extrac_math_featuresB:  
+        datasets_extr, names_math = extrac_math_features(features_amino, sequences_dictionary, feat_path)
+    prots = None
+    for f in ['kGap_di', 'Shannon', 'Tsallis_23', 'Tsallis_30', 'Tsallis_40', 'AAC', 'DPC']:
+        ids = set(pd.read_csv(feat_path+'/'+f+'.csv', usecols=['nameseq'])['nameseq'].astype(str))
+        prots = ids if prots is None else prots & ids
+
+    def usable_pairs(df):
+        return df[df.iloc[:, 0].astype(str).isin(prots) & df.iloc[:, 1].astype(str).isin(prots)]
+
+    topology_jobs = []  # one graph per outer training set and per inner split
     train_edges_output = []
-    test_edges_output = []
+    inner_edges_output = []
     final_edges_output = []
     output_folds_number = []
     partial_folds = []
 
     
     for fold, (train_index, test_index) in enumerate(kf.split(input_interactions_train)):
-        train_edges = input_interactions_train.iloc[train_index]
-        final_test = input_interactions_train.iloc[test_index]
-        train_edges, test_edges = train_test_split(train_edges, test_size=1/8, random_state=42)
+        if fold not in run_folds:
+            for placeholder in (output_folds_number, partial_folds, train_edges_output, final_edges_output, inner_edges_output):
+                placeholder.append(None)
+            continue
+        # outer split: 80% train (no separate validation part) / 20% test
+        # the topology graphs keep every training pair; the models only use pairs whose proteins have descriptors
+        train_graph = input_interactions_train.iloc[train_index].iloc[:, :3].drop_duplicates()
+        train_edges = usable_pairs(train_graph)
+        final_test = usable_pairs(input_interactions_train.iloc[test_index].iloc[:, :3].drop_duplicates())
         output_folds_number.append(output_folds +'/fold'+str(fold+1))
         make_fold(output_folds_number[fold])
 
@@ -510,29 +557,43 @@ def feat_eng(input_interactions_train, sequences_dictionary, n_cpu, foutput, can
 
         train_edges_output.append(output_folds_number[fold]+'/edges_train.csv')
         train_edges.to_csv(train_edges_output[fold], index=False)
-        
-        test_edges_output.append(output_folds_number[fold]+'/edges_test.csv')
-        test_edges.to_csv(test_edges_output[fold], index=False)
 
         final_edges_output.append(output_folds_number[fold]+'/edges_final_test.csv')
         final_test.to_csv(final_edges_output[fold], index=False)
 
         if extrac_topo_features:
-            print('Topology features extraction fold'+str(fold+1))
-            #if fold+1 == 10:
-            extrac_features_topology(train_edges, edges, output_folds_number[fold])
+            topology_jobs.append((train_graph, edges, output_folds_number[fold]))
+
+        # inner split: OOF predictions of the partial models; topology is recomputed from each inner training graph
+        inner_edges_output.append([])
+        for j, (inner_train_index, inner_held_index) in enumerate(inner_kf.split(train_edges, train_edges.iloc[:, 2])):
+            inner_dir = output_folds_number[fold]+'/inner'+str(j+1)
+            make_fold(inner_dir)
+            inner_train = train_edges.iloc[inner_train_index]
+            inner_held = train_edges.iloc[inner_held_index]
+            inner_train.to_csv(inner_dir+'/edges_train.csv', index=False)
+            inner_held.to_csv(inner_dir+'/edges_held.csv', index=False)
+            inner_edges_output[fold].append((inner_dir+'/edges_train.csv', inner_dir+'/edges_held.csv'))
+            if extrac_topo_features:
+                topology_jobs.append((train_graph.drop(index=inner_held.index), edges, inner_dir))
         
 
         
+    # Topology extraction is the slowest step; the graphs are independent, so n_cpu of them run at a time
+    if topology_jobs:
+        print('Topology features extraction:', len(topology_jobs), 'graphs with', n_cpu, 'cpu(s)')
+        if int(n_cpu) > 1:
+            with Pool(int(n_cpu)) as pool:
+                pool.starmap(extrac_features_topology, topology_jobs)
+        else:
+            for job in topology_jobs:
+                extrac_features_topology(*job)
+
     names_topo = ['topology_P', 'topology_N']
     datasets_topo=[]
     for p in range(num_folds):            
             datasets_topo.append([foutput+'/folds_and_topology_feats/fold'+str(p+1)+'/feat_'+names_topo[0]+'.csv',
              foutput+'/folds_and_topology_feats/fold'+str(p+1)+'/feat_'+names_topo[1]+'.csv'])
-
-    features_amino = [1,2,3,4,5,6,7,8] #,9,10,11]
-    if extrac_math_featuresB:  
-        datasets_extr, names_math = extrac_math_features(features_amino, sequences_dictionary, feat_path)
 
     datasets_extr = []
     names_math = []
@@ -587,7 +648,7 @@ def fit_mod(input_interactions_train, sequences_dictionary, n_cpu, foutput, cand
         
     if parcial_models_cond: 
         #print('Starting the model training stage')
-        for p in range(num_folds): 
+        for p in run_folds: 
             print()
             trains = []
             tests = []
@@ -595,14 +656,15 @@ def fit_mod(input_interactions_train, sequences_dictionary, n_cpu, foutput, cand
 
             if extrac_topo_features == True:
                 for i in range(2):
-                    partial_models('Node', datasets_topo[p][i], names_topo[i], train_edges_output[p], test_edges_output[p], final_edges_output[p], partial_folds[p])
+                    inner_topo = [output_folds_number[p]+'/inner'+str(j+1)+'/feat_'+names_topo[i]+'.csv' for j in range(num_inner)]
+                    partial_models('Node', [datasets_topo[p][i]] + inner_topo, names_topo[i], train_edges_output[p], inner_edges_output[p], final_edges_output[p], partial_folds[p])
                     trains.append(partial_folds[p]+'/data_train_'+names_topo[i]+'.csv')
                     tests.append(partial_folds[p]+'/data_test_'+names_topo[i]+'.csv')
                     if isinstance(candidates, pd.DataFrame): 
                         cands.append(partial_folds[p]+'/data_candidates_'+names_topo[i]+'.csv')
             
             for j in range(1,len(names_math_feat)):
-                partial_models('nameseq', datasets_extr[j], names_math[j], train_edges_output[p], test_edges_output[p], final_edges_output[p], partial_folds[p])
+                partial_models('nameseq', [datasets_extr[j]] * (1 + num_inner), names_math[j], train_edges_output[p], inner_edges_output[p], final_edges_output[p], partial_folds[p])
                 trains.append(partial_folds[p]+'/data_train_'+names_math[j]+'.csv')
                 tests.append(partial_folds[p]+'/data_test_'+names_math[j]+'.csv')
                 if isinstance(candidates, pd.DataFrame): 
@@ -619,8 +681,10 @@ def fit_mod(input_interactions_train, sequences_dictionary, n_cpu, foutput, cand
             X_train = final_X_train
             y_train = final_y_train
 
-            clf = better_model(final_X_train, final_y_train, final_X_test, final_y_test, 
-                               output_folds_number[p]+'/model_final.sav', tuning=False)
+            # The final model (aggregator) is always CatBoost, trained on the OOF meta-features
+            clf = CatBoostClassifier(random_state=43, verbose=False)
+            clf.fit(final_X_train.astype('float32').values, np.ravel(final_y_train))
+            joblib.dump(clf, output_folds_number[p]+'/model_final.sav')
 
 
             generated_plt = interp_shap(clf, final_X_train, final_y_train, output_folds_number[p]) 
@@ -646,7 +710,7 @@ def fit_mod(input_interactions_train, sequences_dictionary, n_cpu, foutput, cand
                 model_result.to_csv(output_table, index=False)
 
     metrics_output = []
-    for p in range(num_folds):
+    for p in run_folds:
         metrics_output.append(foutput+'/folds_and_topology_feats/fold'+str(p+1)+'/metrics_model_final.csv')
 
     if final_model:
@@ -697,6 +761,7 @@ if __name__ == '__main__':
     
     parser.add_argument('-output', '--output', help='resutls directory, e.g., result/')
     parser.add_argument('-n_cpu', '--n_cpu', default=1, help='number of cpus - default = 1')
+    parser.add_argument('-folds', '--folds', type=int, nargs='+', default=None, help='outer folds to run, e.g., 1 (default: all five)')
     
     args = parser.parse_args() 
     input_interactions_train = args.input_interactions_train
@@ -707,6 +772,8 @@ if __name__ == '__main__':
     n_cpu = args.n_cpu
     
     
+    if args.folds:
+        run_folds = [f - 1 for f in args.folds]
     candidates = args.input_interactions_candidates
     if candidates != '':
         candidates = pd.read_csv(candidates, sep=',')

@@ -75,7 +75,7 @@ def final_predictions(X_test, y_test, y_pares, model, output):
 
 
 def dist_score(output_data, output):
-    output_data[['ProteinA', 'ProteinB']] = output_data['nameseq'].str.split('_', expand=True)
+    output_data[['ProteinA', 'ProteinB']] = output_data['nameseq'].str.split('_', n=1, expand=True)
     df = output_data
     # Filter the data for positive and negative interactions
     df_positive = df[df['Class_real'] == 1]
@@ -119,7 +119,7 @@ def precision_graph_int(output_data, output):
     - output: The file path to the saved precision vs. threshold graph image.
     """
     # Separar 'nameseq' em 'ProteinA' e 'ProteinB'
-    output_data[['ProteinA', 'ProteinB']] = output_data['nameseq'].str.split('_', expand=True)
+    output_data[['ProteinA', 'ProteinB']] = output_data['nameseq'].str.split('_', n=1, expand=True)
 
     # Definir os intervalos
     score1 = [1.00, 0.90, 0.80, 0.70, 0.60]

@@ -12,7 +12,7 @@ import statistics
 from sklearn.model_selection import train_test_split, GridSearchCV, KFold
 from sklearn.metrics import (
     precision_recall_curve, precision_score, recall_score, f1_score,
-    auc, accuracy_score, balanced_accuracy_score, roc_auc_score
+    auc, accuracy_score, balanced_accuracy_score, roc_auc_score, average_precision_score
 )
 from sklearn.naive_bayes import GaussianNB
 from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
@@ -117,13 +117,10 @@ def metrics(preds, test_labels, preds_proba, output):
     # Calculate accuracy
     accuracy = accuracy_score(test_labels, preds)
 
-    # Calculate precision and recall for various thresholds (used for AUPR calculation)
-    precision, recall, _ = precision_recall_curve(test_labels, preds)
-
     auc_roc = roc_auc_score(test_labels, preds_proba)
-    
-    # Calculate AUPR (Area Under Precision-Recall Curve)
-    aupr = auc(recall, precision)
+
+    # AUPR (average precision) computed from the predicted probabilities, not from the hard labels
+    aupr = average_precision_score(test_labels, preds_proba)
 
     # Calculate balanced accuracy
     balanced = balanced_accuracy_score(test_labels, preds)
